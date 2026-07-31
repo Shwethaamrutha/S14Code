@@ -190,7 +190,7 @@ def _install_fake_gateway(monkeypatch, compose_surface_fn):
     _content = {1: _CONTENT_TURN_1, 2: _CONTENT_TURN_2,
                 3: _CONTENT_TURN_3, 4: _CONTENT_TURN_4}
 
-    async def fake_gateway(_app, prompt: str, _system: str):
+    async def fake_gateway(_app, prompt: str, _system: str, *, byok_key: str | None = None):
         turn = _turn_index(prompt)
         return {"text": json.dumps(_content[turn]),
                 "provider": "fake", "model": "fake-content"}
@@ -426,3 +426,75 @@ def test_codeworks_refuses_adversarial_codeblock_surface(app_client, monkeypatch
     assert invariants_hit == {"data-not-code"}, invariants_hit
     refused_ids = {r["component_id"] for r in v["rejections"]}
     assert refused_ids == {"evil_inline", "evil_handler", "evil_lang"}
+
+
+# --------------------------------------------------------------------------- #
+# BYOK: a browser-supplied X-User-Gemini-Key must reach the gateway seam
+# verbatim so the hosted deploy can survive the host's free-tier quota being
+# exhausted. The header MUST NOT be echoed back or persisted anywhere.
+# --------------------------------------------------------------------------- #
+def test_byok_header_reaches_gateway_seam(app_client, monkeypatch):
+    """The X-User-Gemini-Key header a browser sends must be forwarded to the
+    gateway callable verbatim — otherwise the BYOK panel on /codeworks is a
+    lie, and a hosted deploy would burn the host's quota on every visitor."""
+    seen: list[str | None] = []
+
+    async def fake_gateway(_app, prompt: str, _system: str, *, byok_key=None):
+        seen.append(byok_key)
+        return {"text": json.dumps(_CONTENT_TURN_1),
+                "provider": "fake", "model": "fake-content"}
+
+    monkeypatch.setattr(agent_route, "gateway_text_llm", fake_gateway)
+
+    # Send the header with a run request.
+    resp = app_client.post("/v1/agent/runs",
+        headers={"X-User-Gemini-Key": "AIza-fake-user-key-abc"},
+        json={"tenant_id": "course", "prompt": "hello", "respond_as": "text"})
+    assert resp.status_code == 200, resp.text
+    assert seen and seen[-1] == "AIza-fake-user-key-abc", seen
+
+    # A blank header MUST be normalised to None (not the empty string) so the
+    # gateway falls back to its pooled key.
+    seen.clear()
+    resp2 = app_client.post("/v1/agent/runs",
+        headers={"X-User-Gemini-Key": "   "},
+        json={"tenant_id": "course", "prompt": "hi", "respond_as": "text"})
+    assert resp2.status_code == 200, resp2.text
+    assert seen and seen[-1] is None, seen
+
+    # No header at all — same fallback, no accidental empty-string leak.
+    seen.clear()
+    resp3 = app_client.post("/v1/agent/runs",
+        json={"tenant_id": "course", "prompt": "hi", "respond_as": "text"})
+    assert resp3.status_code == 200, resp3.text
+    assert seen and seen[-1] is None, seen
+
+
+def test_byok_gatewayclient_forwards_header_only_when_key_present():
+    """Direct unit-test on GatewayClient: the X-User-Gemini-Key header is set
+    only when byok_key is a non-empty string. Guards against the ""→header
+    leak that would silently override the pooled key with garbage."""
+    import httpx as _httpx
+    from s13code.gateway import GatewayClient
+
+    captured: list[dict] = []
+
+    async def handler(request: _httpx.Request) -> _httpx.Response:
+        captured.append(dict(request.headers))
+        return _httpx.Response(200, json={"text": "ok", "provider": "gemini_1", "model": "x"})
+
+    client = _httpx.AsyncClient(transport=_httpx.MockTransport(handler))
+    gw = GatewayClient(base_url="http://mock", client=client)
+
+    import asyncio
+    asyncio.run(gw.complete("hi", "sys", byok_key="AIza-real"))
+    assert captured[-1].get("x-user-gemini-key") == "AIza-real"
+
+    asyncio.run(gw.complete("hi", "sys"))          # no key
+    assert "x-user-gemini-key" not in captured[-1]
+
+    asyncio.run(gw.complete("hi", "sys", byok_key="   "))  # whitespace
+    assert "x-user-gemini-key" not in captured[-1]
+
+    asyncio.run(gw.complete("hi", "sys", byok_key=None))
+    assert "x-user-gemini-key" not in captured[-1]

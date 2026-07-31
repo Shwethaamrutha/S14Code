@@ -35,6 +35,14 @@
   .startbar button{padding:12px 22px;border:none;border-radius:10px;background:var(--accent);color:var(--surface);font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;letter-spacing:.02em;transition:filter 120ms}
   .startbar button:hover{filter:brightness(1.1)}
   .startbar button:disabled{opacity:.5;cursor:not-allowed}
+  .byok{display:flex;gap:8px;align-items:center;margin-bottom:12px;padding:8px 12px;border:1px dashed var(--rule);border-radius:9px;background:var(--surface);flex-wrap:wrap}
+  .byok label{font-family:var(--font-mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-dim);white-space:nowrap}
+  .byok input{flex:1;min-width:220px;padding:6px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--surface-2);color:var(--ink-body);font-family:var(--font-mono);font-size:12px}
+  .byok input:focus{outline:none;border-color:var(--accent)}
+  .byok .hint{font-family:var(--font-mono);font-size:11px;color:var(--ink-dim);flex-basis:100%}
+  .byok .hint a{color:var(--accent);text-decoration:none}
+  .byok .clear{background:none;border:none;color:var(--ink-dim);cursor:pointer;font-size:12px;padding:2px 6px}
+  .byok .clear:hover{color:var(--ink)}
   .status{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-muted);min-height:22px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .pill{padding:3px 10px;border-radius:999px;font-weight:600;font-size:11px;font-family:var(--font-mono);letter-spacing:.02em}
   .pill.good{background:var(--green-soft);color:var(--green-ink)}
@@ -126,6 +134,12 @@
   <div class="startbar">
     <textarea id="prompt" placeholder="Describe the code you want (any language). The agent replies with a highlighted CodeBlock — never with markdown-in-prose."></textarea>
     <button id="ask">Ask</button>
+  </div>
+  <div class="byok" id="byok">
+    <label for="byok-key">Your Gemini key</label>
+    <input id="byok-key" type="password" autocomplete="off" spellcheck="false" placeholder="AIza… — kept in your browser, sent only to the gateway on this page">
+    <button class="clear" id="byok-clear" type="button" title="Forget the key stored in this browser">clear</button>
+    <span class="hint">Optional. Only used if the host's free-tier quota is exhausted. Stored in this browser's localStorage; never logged. <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Get a free key</a>.</span>
   </div>
   <div class="status" id="status"></div>
   <div class="screen">
@@ -545,6 +559,22 @@ function updateCrumbs(){
   el.append(T(convo.map((t,i)=>(i===0?t:"› "+t)).join(" ")));
 }
 
+// ---- BYOK: read the Gemini key from the input (persisted in localStorage).
+// The key is sent verbatim as an X-User-Gemini-Key header, which the gateway
+// forwards into a contextvar-scoped one-request override. Never logged, never
+// echoed back, never stored on the server.
+const BYOK_STORAGE_KEY = "s14code:byok:gemini";
+function byokKey(){
+  const el=document.getElementById("byok-key");
+  return el && el.value.trim() ? el.value.trim() : "";
+}
+function byokHeaders(base){
+  const h=Object.assign({},base||{});
+  const k=byokKey();
+  if(k) h["X-User-Gemini-Key"]=k;
+  return h;
+}
+
 async function runTurn(userText){
   convo.push(userText);updateCrumbs();
   document.getElementById("ask").disabled=true;
@@ -552,7 +582,7 @@ async function runTurn(userText){
   const goal=convo.length===1?convo[0]
     :convo[0]+"\nSo far the user then picked: "+convo.slice(1).join(", then ")+".\nRespond with the next interface for that.";
   try{
-    const res=await fetch(API+"/v1/agent/runs",{method:"POST",headers:{"Content-Type":"application/json"},
+    const res=await fetch(API+"/v1/agent/runs",{method:"POST",headers:byokHeaders({"Content-Type":"application/json"}),
       body:JSON.stringify({prompt:goal,respond_as:"ui",tenant_id:"course",project_id:"s14",user_id:"codeworks",agent_id:"assistant"})});
     if(!res.ok){throw new Error("run failed: "+res.status);}
     const run=await res.json();
@@ -592,6 +622,26 @@ document.getElementById("prompt").addEventListener("keydown",e=>{
 document.querySelectorAll("#starters button").forEach(b=>{
   b.onclick=()=>{const p=b.getAttribute("data-prompt");document.getElementById("prompt").value=p;convo=[];showRefusals([]);runTurn(p);};
 });
+
+// ---- BYOK persistence: restore on load; save on change; clear on demand.
+(function initByok(){
+  const inp=document.getElementById("byok-key");
+  const clr=document.getElementById("byok-clear");
+  if(!inp) return;
+  try{const saved=localStorage.getItem(BYOK_STORAGE_KEY);if(saved) inp.value=saved;}catch(e){}
+  inp.addEventListener("input",()=>{
+    try{
+      const v=inp.value.trim();
+      if(v) localStorage.setItem(BYOK_STORAGE_KEY, v);
+      else  localStorage.removeItem(BYOK_STORAGE_KEY);
+    }catch(e){}
+  });
+  clr.addEventListener("click",()=>{
+    inp.value="";
+    try{localStorage.removeItem(BYOK_STORAGE_KEY);}catch(e){}
+    inp.focus();
+  });
+})();
 </script>
 </body>
 </html>

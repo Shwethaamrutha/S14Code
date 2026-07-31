@@ -13,7 +13,8 @@ class GatewayClient:
         self._client = client or httpx.AsyncClient(timeout=120)
         self._owns_client = client is None
 
-    async def complete(self, prompt: str, system: str, *, session: str | None = None) -> dict[str, Any]:
+    async def complete(self, prompt: str, system: str, *, session: str | None = None,
+                       byok_key: str | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "messages": [{"role": "user", "content": prompt}],
             "system": system,
@@ -32,7 +33,11 @@ class GatewayClient:
         # Default to gemini so an unset env never falls through to the gateway's
         # default provider order (which may put a heavy local model first).
         payload["provider"] = os.getenv("S13_GATEWAY_PROVIDER", "gemini")
-        response = await self._client.post(f"{self.base_url}/v1/chat", json=payload)
+        # BYOK: a hosted-demo caller may ship their own Gemini key so the
+        # public deployment doesn't burn the host's free-tier quota. The
+        # gateway swaps it in for this request only (contextvar-scoped).
+        headers = {"X-User-Gemini-Key": byok_key} if (byok_key or "").strip() else None
+        response = await self._client.post(f"{self.base_url}/v1/chat", json=payload, headers=headers)
         if response.status_code >= 400:
             raise RuntimeError(f"GLC /v1/chat returned {response.status_code}: {response.text[:500]}")
         body = response.json()

@@ -16,7 +16,7 @@ from typing import Any
 
 from s13code.core.live_graph import GraphPatch, GraphStore, LiveGraphExecutor, TaskSpec
 from s13code.core.memory import MemoryKind, MemoryRecord, MemoryScope, MemoryStore, Principal, SourceRef
-from s13code.core.memory.embeddings import OllamaNomicEmbedder
+from s13code.core.memory.embeddings import DeterministicEmbedder, OllamaNomicEmbedder
 from s13code.planner import ConstrainedGraphPatchPlanner
 from s13code.tools import fetch_url, sandbox_files, sandbox_path, web_search
 
@@ -300,7 +300,16 @@ class S13Runtime:
         # between those profiles.
         self.root = root or Path(os.getenv("S13_DATA_DIR", str(Path.home() / ".s13code")))
         self.root.mkdir(parents=True, exist_ok=True)
-        self.memory = MemoryStore(self.root / "memory.sqlite", embedder=OllamaNomicEmbedder())
+        # Embedder selection. Local dev uses Ollama's nomic-embed-text (default);
+        # hosted deploys (Modal, HF Spaces) have no Ollama, so an env override
+        # lets them fall back to the deterministic bag-of-words embedder that
+        # ships in-package. Set S13_EMBEDDER=deterministic in the hosted env.
+        embedder_kind = os.getenv("S13_EMBEDDER", "ollama").lower()
+        if embedder_kind == "deterministic":
+            embedder = DeterministicEmbedder()
+        else:
+            embedder = OllamaNomicEmbedder()
+        self.memory = MemoryStore(self.root / "memory.sqlite", embedder=embedder)
         self.graph = GraphStore(self.root / "graph.sqlite")
 
     def close(self) -> None:

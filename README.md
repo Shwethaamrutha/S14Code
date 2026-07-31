@@ -158,6 +158,28 @@ uv run pytest -q                             # S13 core + regression tests + the
 
 ## Session 14 assignment — `CodeBlock` and the CodeWorks app
 
+**Live hosted demo:** **<https://shwetha-sd78--s14code-codeworks-web.modal.run/codeworks>**
+
+Deployed on Modal — one container serves both the model gateway (`glc_v3`, bound
+to `127.0.0.1:8111` inside the container) and this runtime (public ASGI URL).
+The Gemini key lives as a Modal secret; no key ever touches the image or git.
+
+**BYOK.** The `/codeworks` page has a "Your Gemini key" input. Paste your own
+free-tier key and every request in that browser session ships it as
+`X-User-Gemini-Key`, which the gateway swaps in for that single request
+(contextvar-scoped, never persisted). Blank input → falls back to the host
+key. This keeps the demo alive if the host's free-tier quota runs out on
+submission day, and lets reviewers verify the security path end to end. Get
+a free key at <https://aistudio.google.com/app/apikey>.
+
+Deploy script:
+[`deploy/modal_app.py`](deploy/modal_app.py). Reproduce the deploy:
+
+```bash
+modal secret create s14-gemini-key GEMINI_API_KEY_1=<your-key>
+modal deploy deploy/modal_app.py
+```
+
 **Part 1 — the `CodeBlock` component.** Added to the trusted catalog in
 [`s13code/ui/catalog.py`](s13code/ui/catalog.py) with the schema
 `{title: text, code: binding, language: text, onCopy: action}`. The renderer
