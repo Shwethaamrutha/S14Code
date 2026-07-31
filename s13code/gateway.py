@@ -17,7 +17,11 @@ class GatewayClient:
         payload: dict[str, Any] = {
             "messages": [{"role": "user", "content": prompt}],
             "system": system,
-            "max_tokens": 700,
+            # 700 is enough for a short text answer but truncates the structured
+            # content-role JSON on richer prompts (metrics + series + table +
+            # sections). The env override lets a live demo widen it without a
+            # code change; the default stays conservative for legacy callers.
+            "max_tokens": int(os.getenv("S13_GATEWAY_MAX_TOKENS", "700")),
             "temperature": 0,
             "reasoning": "off",
             "agent": "s13_answer",
