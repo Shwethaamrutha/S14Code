@@ -698,9 +698,14 @@ class S13Runtime:
             structured = _parse_json_object(raw)
             # A plain-text fallback so a compose step always has prose to bind even
             # when the model ignored the schema: the intro/title if we parsed one,
-            # else the raw reply.
+            # else the raw reply IF it's actually prose — never a truncated JSON
+            # blob, which would otherwise leak into dataModel.summary and render
+            # as raw JSON in the UI (a real bug seen against Gemini when the
+            # response hit max_tokens mid-string).
             if isinstance(structured, dict):
                 text = str(structured.get("intro") or structured.get("title") or "").strip()
+            elif raw.lstrip().startswith(("{", "[")):
+                text = ""  # looks like JSON that failed to parse — do NOT leak
             else:
                 text = raw
             return {"structured": structured, "text": text, "raw": raw,

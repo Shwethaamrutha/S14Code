@@ -498,3 +498,64 @@ def test_byok_gatewayclient_forwards_header_only_when_key_present():
 
     asyncio.run(gw.complete("hi", "sys", byok_key=None))
     assert "x-user-gemini-key" not in captured[-1]
+
+
+# --------------------------------------------------------------------------- #
+# Regression: when Gemini truncates the content-role JSON mid-string,
+# _parse_json_object returns None and the old fallback set text=raw, which
+# leaked the raw JSON blob into dataModel.summary — the UI then rendered a
+# wall of {"title":..., "table":...} literals instead of prose. The fallback
+# must NOT bind JSON-looking raw output.
+# --------------------------------------------------------------------------- #
+def test_content_role_never_leaks_raw_json_when_parse_fails(app_client, monkeypatch):
+    """A truncated-JSON response from the model must NOT flow into the UI
+    surface as literal text — the composer would bind it and users would see
+    the raw JSON on-screen. When parse fails and the response looks like JSON,
+    text must be empty."""
+    # Content-role gets a truncated JSON blob (missing closing brace).
+    truncated = '{"title":"Web Frameworks","intro":"Compare Flask, FastAPI, Django","table":{"columns":["Framework","Speed"'
+    # Compose-role gets a clean surface that binds /summary to a Text.
+    surface = {
+        "root": "col",
+        "components": [
+            {"id": "col", "type": "Column", "children": ["hdr"]},
+            {"id": "hdr", "type": "Text", "variant": "body",
+             "text": {"$bind": "/summary"}},
+        ],
+    }
+
+    async def fake_gateway(_app, prompt, _system, *, byok_key=None):
+        # First call is the content role; return the truncated JSON.
+        # (Fine to answer both calls the same in a test — the JSON-shape check
+        # only applies to the content role's fallback.)
+        return {"text": truncated, "provider": "fake", "model": "x"}
+
+    monkeypatch.setattr(agent_route, "gateway_text_llm", fake_gateway)
+
+    real_client = httpx.AsyncClient
+
+    async def compose_handler(request):
+        return httpx.Response(200, json={"text": json.dumps(surface),
+                                         "provider": "fake", "model": "x"})
+
+    def factory(*args, **kwargs):
+        kwargs.setdefault("transport", httpx.MockTransport(compose_handler))
+        return real_client(*args, **kwargs)
+    monkeypatch.setattr("httpx.AsyncClient", factory)
+
+    resp = app_client.post("/v1/agent/runs", json={
+        "tenant_id": "course", "prompt": "compare python web frameworks",
+        "respond_as": "ui"})
+    assert resp.status_code == 200, resp.text
+    run_id = resp.json()["run_id"]
+
+    composed = app_client.get(f"/v1/runs/{run_id}/composed").json()
+    dm = composed["surface"]["dataModel"]
+    summary = str(dm.get("summary", ""))
+    # The truncated JSON must not surface as text. Either empty, or the run
+    # prompt (the last-resort fallback in _build_data_model). NEVER the
+    # partial JSON blob.
+    assert not summary.lstrip().startswith("{"), (
+        f"raw JSON leaked into dataModel.summary: {summary[:100]!r}")
+    assert '"columns":["Framework"' not in summary, (
+        "the specific truncated fragment must not appear in the surface")
