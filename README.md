@@ -240,12 +240,28 @@ sets, and the variety check (`Button`-only → `CodeBlock`-python →
 `CodeBlock`-typescript → prose) verifies the app doesn't reach for
 `CodeBlock` reflexively.
 
-**Screenshots per turn** — [`proofs/screens/turn1.png`](proofs/screens/turn1.png)
-through [`turn4.png`](proofs/screens/turn4.png), plus
-[`turn5_refused.png`](proofs/screens/turn5_refused.png) for the adversarial
-prompt, captured by a headless Chromium in
-[`proofs/browser_demo.py`](proofs/browser_demo.py). Reviewers can see the
-composed UI at each turn without re-running the demo.
+**Screenshots per turn — tap-driven arc on the hosted Modal deploy** —
+[`proofs/screens/turn1.png`](proofs/screens/turn1.png) (typed ask →
+DataTable + 5 Buttons + BYOK panel), [`turn2.png`](proofs/screens/turn2.png)
+(tapped *"Moving Average (SMA / EMA)"* → Python CodeBlock with SMA + EMA
+implementations, 3 stat tiles, method-comparison card),
+[`turn3.png`](proofs/screens/turn3.png) (tapped *"Explore Other Options"*
+→ 5 alternative-technique cards + 5 follow-up Buttons, 3-entry crumb trail),
+and [`turn4_refused.png`](proofs/screens/turn4_refused.png) (adversarial
+prompt asking for an onload handler + markup-in-language → model refused
+at generation time; wall reports 0 rejections because the surface arrived
+clean). All four captured by a headless Chromium in
+[`proofs/browser_demo.py`](proofs/browser_demo.py) against the live Modal
+URL, all pills say `gemini_1 · N components · 0 executable`.
+
+Every turn in the browser is driven by either typing (Ask button, which
+by the shared-code convention resets the crumb trail — see
+`app.html:522`) or **tapping a Button in the composed surface** (which
+calls `choose(label)` → `runTurn(label)`, extending the crumb trail).
+The three-turn arc above uses one typed + two taps; the crumb trail at
+the bottom of turn 3's screenshot proves the state persisted:
+*"I'm writing... › Simple / Exponential Moving Average (SMA / EMA) ›
+Explore Other Options"*.
 
 Reproduce hermetically (no live gateway required):
 
